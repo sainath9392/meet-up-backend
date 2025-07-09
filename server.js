@@ -4,37 +4,42 @@ import cors from "cors";
 import { Server } from "socket.io";
 
 const app = express();
+app.use(cors({
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST"],
+  credentials: true
+}));
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // Adjust for production
+    origin: "http://localhost:5173",
     methods: ["GET", "POST"],
   },
 });
 
-const rooms = {}; // { roomId: Set(socketIds) }
+const rooms = {};
 
 io.on("connection", (socket) => {
   console.log("🔌 Client connected:", socket.id);
 
   socket.on("join_room", (roomId) => {
     socket.join(roomId);
-    console.log(`📥 ${socket.id} joined room ${roomId}`);
-
-    if (!rooms[roomId]) {
-      rooms[roomId] = new Set();
-    }
-
+    if (!rooms[roomId]) rooms[roomId] = new Set();
     const peers = Array.from(rooms[roomId]);
-    rooms[roomId].add(socket.id);
 
-    const otherUser = peers[0]; // Only 1-to-1 room setup
-    if (otherUser) {
+    if (peers.length === 0) {
+      rooms[roomId].add(socket.id);
+      socket.emit("init_role", { initiator: true, peerId: null }); // <--- add peerId: null
+    } else {
+      const otherUser = peers[0];
+      rooms[roomId].add(socket.id);
+      socket.emit("init_role", { initiator: false, peerId: otherUser });
       io.to(otherUser).emit("user_joined", socket.id);
     }
   });
 
+  // ✅ ADD THIS:
   socket.on("sending_signal", ({ userToSignal, signal, from }) => {
     io.to(userToSignal).emit("user_joined_late", {
       signal,
@@ -58,12 +63,10 @@ io.on("connection", (socket) => {
       if (rooms[roomId]) {
         rooms[roomId].delete(socket.id);
 
-        // Notify remaining peer (if any)
         for (const peerId of rooms[roomId]) {
           io.to(peerId).emit("user_left", socket.id);
         }
 
-        // Cleanup
         if (rooms[roomId].size === 0) {
           delete rooms[roomId];
         }
